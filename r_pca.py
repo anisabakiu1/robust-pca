@@ -6,6 +6,7 @@ class RobustPCA:
     def __init__(self, D, mu=None, lmbda=None):
         self.D = D
         self.S = np.zeros(self.D.shape)
+        self.L = None
         self.Y = np.zeros(self.D.shape)
 
         if mu is not None:
@@ -60,3 +61,62 @@ class RobustPCA:
         self.L = Lk
         self.S = Sk
         return Lk, Sk
+
+    def pca(self, n_components=None, tol=1e-6):
+        """
+        Compute PCA (via SVD) on the low-rank component L obtained from fit().
+
+        Parameters
+        ----------
+        n_components : int or None
+            Number of components to retain.
+            If None, the effective rank of L is used.
+        tol : float
+            Threshold to determine the effective rank of L.
+
+        Returns
+        -------
+        dict with keys:
+            'scores' : ndarray, shape (n_samples, k)
+            'loadings' : ndarray, shape (n_features, k)
+            'explained_variance' : ndarray, shape (k,)
+            'explained_variance_ratio' : ndarray, shape (k,)
+            'n_components' : int
+        """
+        if self.L is None:
+            raise RuntimeError("You must call fit() before pca().")
+
+        # Center L (classical PCA centers the data)
+        L_centered = self.L - self.L.mean(axis=0)
+
+        # Singular Value Decomposition
+        U, S, Vt = np.linalg.svd(L_centered, full_matrices=False)
+
+        # Determine the number of components
+        if n_components is None:
+            k = int(np.sum(S > tol * S[0]))
+        else:
+            k = n_components
+
+        # Truncate to the first k components
+        U_k = U[:, :k]
+        S_k = S[:k]
+        Vt_k = Vt[:k, :]
+
+        # Compute scores and loadings
+        scores = U_k * S_k
+        loadings = Vt_k.T
+
+        # Compute explained variance
+        n = self.L.shape[0]
+        explained_variance = (S_k ** 2) / (n - 1)
+        total_var = np.sum(S ** 2) / (n - 1)
+        explained_variance_ratio = explained_variance / total_var
+
+        return {
+            'scores': scores,
+            'loadings': loadings,
+            'explained_variance': explained_variance,
+            'explained_variance_ratio': explained_variance_ratio,
+            'n_components': k,
+        }
