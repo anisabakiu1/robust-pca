@@ -12,10 +12,12 @@ D = L + S
 ```
 
 where:
+
 - **L** is a **low-rank** matrix (captures the underlying structure)
 - **S** is a **sparse** matrix (captures outliers/corruptions)
 
 This is useful when your data has:
+
 - Underlying patterns shared across observations (low-rank structure)
 - Sparse corruptions, outliers, or anomalies
 
@@ -54,6 +56,34 @@ L, S = rpca.fit(max_iter=500)
 # S captures the corrupted entries
 ```
 
+### Running PCA on the recovered low-rank component
+
+Once `fit()` has been called, you can run classical PCA (via SVD) on the
+recovered low-rank matrix `L`. This is useful because `L` has had sparse
+outliers/corruptions removed, so the resulting components are less
+sensitive to those corruptions than a PCA run directly on `D`.
+
+```python
+rpca = RobustPCA(data)
+rpca.fit(max_iter=500)
+
+result = rpca.pca()
+
+result['scores']                    # (n_samples, k) projected coordinates
+result['loadings']                  # (n_features, k) component directions
+result['explained_variance']        # (k,) variance explained per component
+result['explained_variance_ratio']  # (k,) fraction of total variance per component
+result['n_components']              # k, the number of retained components
+```
+
+By default, the number of components `k` is chosen automatically as the
+effective rank of `L` (singular values above `tol * largest_singular_value`
+are kept). You can also fix `k` explicitly:
+
+```python
+result = rpca.pca(n_components=3)
+```
+
 ## Examples
 
 ### 1. Basic Recovery (examples/readme_example.py)
@@ -66,9 +96,9 @@ python -m examples.readme_example
 
 ![readme_example_result](examples/readme_example_result.png)
 
-| Metric | Value |
-|--------|-------|
-| ‖D - (L+S)‖_F | ≈ 0.0001 |
+| Metric                    | Value     |
+| ------------------------- | --------- |
+| ‖D - (L+S)‖_F           | ≈ 0.0001 |
 | ‖D - (L+S)‖_F / ‖D‖_F | ≈ 10⁻⁸ |
 
 ### 2. Image Watermark Removal (examples/image_watermark_removal.py)
@@ -81,12 +111,13 @@ python -m examples.image_watermark_removal
 
 ![image_watermark_result](examples/image_watermark_result.png)
 
-| Metric | Value |
-|--------|-------|
-| ‖D - (L+S)‖_F | ≈ 0.00001 |
-| ‖D - (L+S)‖_F / ‖D‖_F | ≈ 10⁻⁷ |
+| Metric                    | Value      |
+| ------------------------- | ---------- |
+| ‖D - (L+S)‖_F           | ≈ 0.00001 |
+| ‖D - (L+S)‖_F / ‖D‖_F | ≈ 10⁻⁷  |
 
 **How it works:**
+
 - Natural images have low-rank structure (smooth gradients, repeated patterns)
 - Text/watermarks are sparse (only affect a small fraction of pixels)
 - L recovers the clean image, S extracts the watermark
@@ -101,12 +132,13 @@ python -m examples.coil20_recovery
 
 ![coil20_recovery_result](examples/coil20_recovery_result.png)
 
-| Metric | Value |
-|--------|-------|
-| ‖D - (L+S)‖_F / ‖D‖_F | ≈ 10⁻⁶ |
-| ‖L - D_clean‖_F / ‖D_clean‖_F | ≈ 0.13 |
+| Metric                            | Value     |
+| --------------------------------- | --------- |
+| ‖D - (L+S)‖_F / ‖D‖_F         | ≈ 10⁻⁶ |
+| ‖L - D_clean‖_F / ‖D_clean‖_F | ≈ 0.13   |
 
 **How it works:**
+
 - 72 images of the same object from different angles → low-rank matrix
 - 5% of pixels corrupted (set to 0) → sparse component
 - RPCA recovers the clean images by exploiting multi-view redundancy
@@ -116,6 +148,7 @@ python -m examples.coil20_recovery
 ### `RobustPCA(D, mu=None, lmbda=None)`
 
 **Parameters:**
+
 - `D`: Input data matrix (numpy array)
 - `mu`: Augmented Lagrangian parameter (default: auto-computed)
 - `lmbda`: Sparsity regularization (default: `1/sqrt(max(n,m))`)
@@ -125,6 +158,28 @@ python -m examples.coil20_recovery
 Run the ADMM algorithm to decompose D = L + S.
 
 **Returns:** `(L, S)` - the low-rank and sparse components
+
+### `pca(n_components=None, tol=1e-6)`
+
+Compute classical PCA (via SVD) on the low-rank component `L` obtained
+from `fit()`. Must be called after `fit()`.
+
+**Parameters:**
+
+- `n_components`: Number of components to retain. If `None`, the effective rank of `L` is used (singular values greater than `tol * largest_singular_value` are kept).
+- `tol`: Threshold used to determine the effective rank of `L` when `n_components` is `None`.
+
+**Returns:** a `dict` with the following keys:
+
+| Key                          | Shape               | Description                                        |
+| ---------------------------- | ------------------- | -------------------------------------------------- |
+| `scores`                   | `(n_samples, k)`  | Projected coordinates of the samples               |
+| `loadings`                 | `(n_features, k)` | Component directions (right singular vectors)      |
+| `explained_variance`       | `(k,)`            | Variance explained by each retained component      |
+| `explained_variance_ratio` | `(k,)`            | Fraction of total variance explained per component |
+| `n_components`             | `int`             | Number of retained components (`k`)              |
+
+**Raises:** `RuntimeError` if called before `fit()`.
 
 ## Implementation Notes
 
@@ -149,6 +204,10 @@ subject to  D = L + S
 ```
 
 where `||L||_*` is the nuclear norm (sum of singular values) and `||S||_1` is the element-wise L1 norm.
+
+After convergence, `pca()` performs a standard (centered) SVD-based PCA on
+`L` to extract the principal directions of the recovered, outlier-free
+structure.
 
 ### Default Parameters
 
