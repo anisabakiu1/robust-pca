@@ -51,17 +51,21 @@ data[mask] = 0
 # Decompose into low-rank + sparse
 rpca = RobustPCA(data)
 L, S = rpca.fit(max_iter=500)
+```
 
-# L recovers the original structure
-# S captures the corrupted entries
+`fit()` runs silently by default. To see iteration/error progress, pass
+`verbose=True`:
+
+```python
+L, S = rpca.fit(max_iter=500, verbose=True, iter_print=100)
 ```
 
 ### Running PCA on the recovered low-rank component
 
-Once `fit()` has been called, you can run classical PCA (via SVD) on the
-recovered low-rank matrix `L`. This is useful because `L` has had sparse
-outliers/corruptions removed, so the resulting components are less
-sensitive to those corruptions than a PCA run directly on `D`.
+Once `fit()` has been called, you can run PCA (via scikit-learn's
+`PCA`) on the recovered low-rank matrix `L`. This is useful because `L`
+has had sparse outliers/corruptions removed, so the resulting components
+are less sensitive to those corruptions than a PCA run directly on `D`.
 
 ```python
 rpca = RobustPCA(data)
@@ -74,15 +78,38 @@ result['loadings']                  # (n_features, k) component directions
 result['explained_variance']        # (k,) variance explained per component
 result['explained_variance_ratio']  # (k,) fraction of total variance per component
 result['n_components']              # k, the number of retained components
+result['pca_model']                 # fitted sklearn PCA instance
 ```
 
-By default, the number of components `k` is chosen automatically as the
-effective rank of `L` (singular values above `tol * largest_singular_value`
-are kept). You can also fix `k` explicitly:
+By default, `pca()` **standardizes** the columns of `L` (zero mean, unit
+variance, via `StandardScaler`) before running PCA. This matters whenever
+the columns of your data represent heterogeneous variables on different
+scales or units (e.g. social/survey indicators mixing counts, percentages,
+income, etc.) — without standardization, PCA is dominated by whichever
+columns happen to have the largest numeric variance, regardless of their
+real importance.
+
+If instead your columns share the same scale and unit (e.g. pixel
+intensities in a video or image), you can disable standardization and
+fall back to classical, covariance-based PCA (centering only):
+
+```python
+result = rpca.pca(standardize=False)
+```
+
+You can also fix the number of retained components explicitly:
 
 ```python
 result = rpca.pca(n_components=3)
 ```
+
+> **Note:** the RPCA decomposition itself (`fit()`) does **not**
+> standardize `D` — it follows the ADMM algorithm from the paper exactly,
+> which makes no assumption about column scale. If your columns are
+> heterogeneous, consider standardizing `D` yourself before constructing
+> `RobustPCA(D)` if you want the low-rank/sparse split itself to treat all
+> columns comparably; this is a methodological choice on top of the
+> paper, not something the paper prescribes.
 
 ## Examples
 
@@ -153,31 +180,39 @@ python -m examples.coil20_recovery
 - `mu`: Augmented Lagrangian parameter (default: auto-computed)
 - `lmbda`: Sparsity regularization (default: `1/sqrt(max(n,m))`)
 
-### `fit(tol=None, max_iter=1000, iter_print=100)`
+### `fit(tol=None, max_iter=1000, verbose=False, iter_print=100)`
 
 Run the ADMM algorithm to decompose D = L + S.
 
+**Parameters:**
+
+- `tol`: Convergence tolerance. Defaults to `1e-7 * ||D||_F`.
+- `max_iter`: Maximum number of ADMM iterations.
+- `verbose`: If `True`, prints iteration/error progress. Defaults to `False` (silent).
+- `iter_print`: Print every `iter_print` iterations, only when `verbose=True`.
+
 **Returns:** `(L, S)` - the low-rank and sparse components
 
-### `pca(n_components=None, tol=1e-6)`
+### `pca(n_components=None, standardize=True)`
 
-Compute classical PCA (via SVD) on the low-rank component `L` obtained
-from `fit()`. Must be called after `fit()`.
+Compute PCA (via scikit-learn's `PCA`) on the low-rank component `L`
+obtained from `fit()`. Must be called after `fit()`.
 
 **Parameters:**
 
-- `n_components`: Number of components to retain. If `None`, the effective rank of `L` is used (singular values greater than `tol * largest_singular_value` are kept).
-- `tol`: Threshold used to determine the effective rank of `L` when `n_components` is `None`.
+- `n_components`: Passed directly to `sklearn.decomposition.PCA`. If `None`, sklearn keeps `min(n_samples, n_features)` components.
+- `standardize`: If `True` (default), standardizes `L`'s columns (zero mean, unit variance) via `StandardScaler` before PCA — recommended for heterogeneous variables. If `False`, only centers the data (classical PCA on the covariance matrix) — appropriate when all columns share the same scale/unit.
 
 **Returns:** a `dict` with the following keys:
 
 | Key                          | Shape               | Description                                        |
 | ---------------------------- | ------------------- | -------------------------------------------------- |
 | `scores`                   | `(n_samples, k)`  | Projected coordinates of the samples               |
-| `loadings`                 | `(n_features, k)` | Component directions (right singular vectors)      |
+| `loadings`                 | `(n_features, k)` | Component directions                               |
 | `explained_variance`       | `(k,)`            | Variance explained by each retained component      |
 | `explained_variance_ratio` | `(k,)`            | Fraction of total variance explained per component |
 | `n_components`             | `int`             | Number of retained components (`k`)              |
+| `pca_model`                | sklearn`PCA`      | The fitted scikit-learn PCA instance               |
 
 **Raises:** `RuntimeError` if called before `fit()`.
 
@@ -205,9 +240,13 @@ subject to  D = L + S
 
 where `||L||_*` is the nuclear norm (sum of singular values) and `||S||_1` is the element-wise L1 norm.
 
-After convergence, `pca()` performs a standard (centered) SVD-based PCA on
-`L` to extract the principal directions of the recovered, outlier-free
-structure.
+The ADMM decomposition itself is performed on `D` exactly as given, with
+no standardization — this follows the paper, which makes no assumption
+about column scale. After convergence, `pca()` performs PCA on `L` to
+extract the principal directions of the recovered, outlier-free
+structure; standardizing at this stage (the default) is a separate,
+practical choice for data with heterogeneous columns, not something
+mandated by the paper itself.
 
 ### Default Parameters
 
@@ -222,4 +261,5 @@ python -m pytest test_r_pca.py -v
 
 ## References
 
+* [ ] 
 - Candès, E. J., Li, X., Ma, Y., & Wright, J. (2011). Robust Principal Component Analysis? *Journal of the ACM*, 58(3), 1-37. [ACM](https://dl.acm.org/doi/10.1145/1970392.1970395) | [arXiv](https://arxiv.org/abs/0912.3599)
